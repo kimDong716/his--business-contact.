@@ -84,7 +84,7 @@ closing-app/
 
 ```javascript
 const CONFIG = {
-  API_URL: "여기에_AppsScript_웹앱_URL_입력"
+  API_URL: "https://script.google.com/macros/s/AKfycbxK0qWzThWu1D4i7hEYTURY0Dq9CSraMUZS7ADRFKiDc-aV_na_YpAAQ0pWQwrDWWe0/exec"
 };
 ```
 
@@ -240,76 +240,3 @@ id | month | client_id | name | income | expense | balance | memo | user | times
 email | role | active
 admin@gmail.com | admin | Y
 ```
-
----
-
-# 9️⃣ Apps Script 코드 (구글시트 API 서버)
-
-구글시트 → 확장프로그램 → Apps Script → 아래 코드 붙여넣기
-
-```javascript
-function doPost(e) {
-  const sheetClients = SpreadsheetApp.getActive().getSheetByName("Clients");
-  const sheetClosing = SpreadsheetApp.getActive().getSheetByName("Monthly_Closing");
-
-  const data = JSON.parse(e.postData.contents);
-
-  if (data.action === "getClients") {
-    const rows = sheetClients.getDataRange().getValues().slice(1);
-    const result = rows
-      .filter(r => r[2] === "active")
-      .map(r => ({ id: r[0], name: r[1] }));
-    return jsonOutput(result);
-  }
-
-  if (data.action === "getMonthly") {
-    const rows = sheetClosing.getDataRange().getValues().slice(1);
-    const filtered = rows.filter(r => r[1] === data.month);
-
-    const result = filtered.map(r => ({
-      name: r[3],
-      income: r[4],
-      expense: r[5],
-      balance: r[6]
-    }));
-
-    return jsonOutput(result);
-  }
-
-  if (data.action === "saveClosing") {
-    const balance = Number(data.income) - Number(data.expense);
-    sheetClosing.appendRow([
-      Utilities.getUuid(),
-      data.month,
-      data.clientId,
-      "",
-      data.income,
-      data.expense,
-      balance,
-      data.memo,
-      data.user,
-      new Date()
-    ]);
-
-    return jsonOutput({ status: "success" });
-  }
-}
-
-function jsonOutput(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-```
-
----
-
-# 🔟 배포 순서 (5단계)
-
-1. 구글시트 생성
-2. 시트 3개 생성 (Clients, Monthly_Closing, Users)
-3. Apps Script 배포 → 웹앱 URL 복사
-4. config.js에 URL 입력
-5. GitHub 업로드 → GitHub Pages 활성화
-
-완료 후 모바일/PC 모두 접속 사용 가능
