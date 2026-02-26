@@ -9,7 +9,7 @@ st.set_page_config(page_title="영업 관리 시스템", layout="wide")
 # --- 구글 시트 연결 ---
 # Secrets에 등록한 설정을 자동으로 불러옵니다.
 conn = st.connection("gsheets", type=GSheetsConnection)
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1YD0AolMY-Ed6vNogf3L04OuaLV3RFLbJxHEd56UISzE/edit#gid=621616384"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1jtSmKfMn4nuJxk5JPQmbkMhP4FrXpD6mD7FsoEEmKtM/edit?gid=0#gid=0"
 
 @st.cache_data(ttl=5)
 def load_data(worksheet_id):
