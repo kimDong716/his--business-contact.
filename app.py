@@ -3,124 +3,116 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-# --- 1. 페이지 설정 ---
-st.set_page_config(page_title="영업/미수금 통합 관리 시스템", layout="wide")
+# --- 페이지 설정 ---
+st.set_page_config(page_title="영업 관리 시스템", layout="wide")
 
-# --- 2. 구글 시트 연결 설정 ---
-# 시트 URL (본인의 시트 주소)
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1YD0AolMY-Ed6vNogf3L04OuaLV3RFLbJxHEd56UISzE/edit#gid=621616384"
+# --- 구글 시트 연결 ---
+# Secrets에 등록한 설정을 자동으로 불러옵니다.
 conn = st.connection("gsheets", type=GSheetsConnection)
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1YD0AolMY-Ed6vNogf3L04OuaLV3RFLbJxHEd56UISzE/edit#gid=621616384"
 
-# 데이터 로드 함수 (캐시 적용)
-@st.cache_data(ttl=5) # 5초 후 자동 갱신
+@st.cache_data(ttl=5)
 def load_data(worksheet_id):
-    df = conn.read(spreadsheet=SHEET_URL, worksheet=str(worksheet_id))
-    # 제목줄 자동 찾기
-    header_idx = 0
-    for i in range(min(len(df), 10)):
-        if df.iloc[i].notna().any():
-            header_idx = i
-            break
-    df.columns = df.iloc[header_idx].astype(str).str.strip()
-    df = df.iloc[header_idx+1:].reset_index(drop=True)
-    return df.fillna('')
+    try:
+        df = conn.read(spreadsheet=SHEET_URL, worksheet=str(worksheet_id))
+        if df.empty: return pd.DataFrame()
+        
+        # 제목줄(Header) 찾기 강화: 데이터가 있는 첫 20행을 뒤짐
+        header_idx = 0
+        for i in range(min(len(df), 20)):
+            row_values = df.iloc[i].astype(str).tolist()
+            if any(k in "".join(row_values) for k in ['업체명', '상호', '일자', '잔고']):
+                header_idx = i
+                break
+        
+        df.columns = df.iloc[header_idx].astype(str).str.strip()
+        df = df.iloc[header_idx+1:].reset_index(drop=True)
+        return df.astype(str).replace(['nan', 'None', 'NaN', 'NaT'], '')
+    except Exception as e:
+        st.error(f"데이터 로드 에러: {e}")
+        return pd.DataFrame()
 
-# 데이터 저장 함수 (핵심!)
-def save_to_sheet(df, worksheet_id):
-    conn.update(spreadsheet=SHEET_URL, worksheet=str(worksheet_id), data=df)
-    st.cache_data.clear() # 저장 후 화면 갱신을 위해 캐시 삭제
+# 데이터 저장 함수
+def save_data(df, worksheet_id):
+    try:
+        conn.update(spreadsheet=SHEET_URL, worksheet=str(worksheet_id), data=df)
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"저장 실패: {e}")
+        return False
 
 # 데이터 로드
-df_summary = load_data("621616384") # 요약/업체 시트
-df_history = load_data("0")         # 거래 내역 시트
+df_summary = load_data("621616384")
+df_history = load_data("0")
 
-# 유틸리티: 컬럼명 찾기
-def find_col(df, keywords):
+# 컬럼 찾기 함수 (에러 방지용)
+def find_col(df, keywords, default_name="Unknown"):
     for col in df.columns:
-        if any(k in str(col) for k in keywords): return str(col)
+        if any(k in str(col) for k in keywords):
+            return str(col)
     return None
 
-# --- 3. 사이드바 메뉴 ---
+# --- 메뉴 구성 ---
 menu = st.sidebar.radio("메뉴 선택", ["🔍 거래처 검색", "📊 전체 현황", "✍️ 거래 내역 입력", "⚙️ 거래처 관리"])
 
-# --- 4. 메뉴별 기능 구현 ---
-
-# [메뉴 1] 거래처 검색 및 상세
 if menu == "🔍 거래처 검색":
     st.title("🔍 거래처 상세 정보")
     name_col = find_col(df_summary, ['업체명', '상호'])
-    status_col = find_col(df_summary, ['상태', '비고'])
     
-    # 종료 업체 제외 리스트
-    active_list = df_summary.copy()
-    if status_col:
-        active_list = active_list[~active_list[status_col].str.contains('종료', na=False)]
-    
-    target = st.selectbox("업체를 선택하세요", ["선택하세요"] + list(active_list[name_col].unique()))
-    
-    if target != "선택하세요":
-        info = active_list[active_list[name_col] == target].iloc[0]
-        c1, c2, c3 = st.columns(3)
-        c1.metric("담당자", info.get(find_col(df_summary, ['담당자']), '정보없음'))
-        c2.metric("연락처", info.get(find_col(df_summary, ['연락처', '전화']), '정보없음'))
-        c3.metric("주요내용", info.get(find_col(df_summary, ['내용', '품목']), '정보없음'))
+    if name_col and not df_summary.empty:
+        # 검색 기능 추가
+        search_q = st.text_input("업체명 검색")
+        filtered_list = df_summary[df_summary[name_col].str.contains(search_q)] if search_q else df_summary
         
-        st.write("#### 📅 월별 거래 요약")
-        # 여기서 History 데이터를 필터링해서 보여줍니다.
-        hist_name_col = find_col(df_history, ['업체명', '상호'])
-        if hist_name_col:
-            personal_hist = df_history[df_history[hist_name_col] == target]
-            st.dataframe(personal_hist, use_container_width=True)
+        target = st.selectbox("업체를 선택하세요", ["선택하세요"] + list(filtered_list[name_col].unique()))
+        
+        if target != "선택하세요":
+            info = df_summary[df_summary[name_col] == target].iloc[0]
+            c1, c2, c3 = st.columns(3)
+            
+            # 정보 표시 (컬럼 유연하게 매칭)
+            mgr_col = find_col(df_summary, ['담당자', '대표'])
+            tel_col = find_col(df_summary, ['연락처', '전화', '핸드폰'])
+            item_col = find_col(df_summary, ['내용', '품목', '거래내용'])
+            
+            c1.metric("담당자", info.get(mgr_col, "정보없음") if mgr_col else "정보없음")
+            c2.metric("연락처", info.get(tel_col, "정보없음") if tel_col else "정보없음")
+            c3.info(f"**거래내용:** {info.get(item_col, '정보없음') if item_col else '정보없음'}")
+            
+            st.divider()
+            st.write("#### 📜 최근 거래 이력")
+            h_name_col = find_col(df_history, ['업체명', '상호'])
+            if h_name_col:
+                st.dataframe(df_history[df_history[h_name_col] == target], use_container_width=True)
+    else:
+        st.error("시트에서 '업체명' 컬럼을 찾을 수 없습니다. 시트의 제목줄을 확인해주세요.")
 
-# [메뉴 2] 전체 현황
 elif menu == "📊 전체 현황":
-    st.title("📊 전체 거래처 현황")
+    st.title("📊 전체 거래처 리스트")
     st.dataframe(df_summary, use_container_width=True)
 
-# [메뉴 3] 거래 내역 입력 (쓰기 기능)
 elif menu == "✍️ 거래 내역 입력":
-    st.title("✍️ 새로운 거래 입력")
-    with st.form("input_form"):
-        name_col = find_col(df_summary, ['업체명', '상호'])
-        target_name = st.selectbox("업체 선택", df_summary[name_col].unique())
-        date = st.date_input("일자", datetime.now())
-        amount = st.number_input("금액", step=1000)
-        memo = st.text_input("적요")
-        
-        if st.form_submit_button("시트에 저장"):
-            # 새 데이터 생성
-            new_data = pd.DataFrame([[date.strftime('%Y-%m-%d'), target_name, amount, memo]], 
-                                    columns=['일자', '업체명', '금액', '비고'])
-            # 기존 데이터와 병합
-            updated_history = pd.concat([df_history, new_data], ignore_index=True)
-            # 저장 실행
-            save_to_sheet(updated_history, "0")
-            st.success("✅ 구글 시트에 성공적으로 저장되었습니다!")
-            st.balloons()
+    st.title("✍️ 거래 내역 기록")
+    name_col = find_col(df_summary, ['업체명', '상호'])
+    if name_col:
+        with st.form("history_form"):
+            c1, c2 = st.columns(2)
+            sel_name = c1.selectbox("업체명", df_summary[name_col].unique())
+            sel_date = c2.date_input("날짜", datetime.now())
+            sel_price = c1.number_input("금액", step=1000)
+            sel_memo = c2.text_input("비고")
+            
+            if st.form_submit_button("시트에 저장하기"):
+                new_row = pd.DataFrame([[sel_date.strftime('%Y-%m-%d'), sel_name, sel_price, sel_memo]], 
+                                        columns=['일자', '업체명', '금액', '비고'])
+                updated_df = pd.concat([df_history, new_row], ignore_index=True)
+                if save_data(updated_df, "0"):
+                    st.success("성공적으로 저장되었습니다!")
+                    st.balloons()
+    else:
+        st.error("업체 리스트를 불러올 수 없어 입력을 진행할 수 없습니다.")
 
-# [메뉴 4] 거래처 관리 (수정/종료)
 elif menu == "⚙️ 거래처 관리":
-    st.title("⚙️ 거래처 정보 수정/종료")
-    tab1, tab2 = st.tabs(["🆕 신규 등록", "✏️ 수정 및 종료"])
-    
-    with tab1: # 신규 등록
-        with st.form("add_client"):
-            new_name = st.text_input("신규 업체명")
-            new_manager = st.text_input("담당자")
-            if st.form_submit_button("업체 추가"):
-                new_client = pd.DataFrame([[new_name, new_manager, '거래중']], 
-                                          columns=['업체명', '담당자', '상태'])
-                updated_summary = pd.concat([df_summary, new_client], ignore_index=True)
-                save_to_sheet(updated_summary, "621616384")
-                st.success(f"{new_name} 등록 완료!")
-
-    with tab2: # 수정 및 종료
-        name_col = find_col(df_summary, ['업체명', '상호'])
-        edit_target = st.selectbox("수정할 업체", df_summary[name_col].unique())
-        if st.button("해당 업체 거래 종료 처리"):
-            # '상태' 컬럼 찾아서 '종료'로 변경
-            status_col = find_col(df_summary, ['상태', '비고'])
-            if status_col:
-                df_summary.loc[df_summary[name_col] == edit_target, status_col] = '종료'
-                save_to_sheet(df_summary, "621616384")
-                st.warning(f"{edit_target} 거래 종료 처리됨")
+    st.title("⚙️ 거래처 정보 수정 및 종료")
+    st.info("신규 거래처 등록 및 수정 기능을 준비 중입니다.")
