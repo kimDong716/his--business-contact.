@@ -19,7 +19,7 @@ def load_data(worksheet_id):
         
         # 제목줄(Header) 찾기 강화: 데이터가 있는 첫 20행을 뒤짐
         header_idx = 0
-        for i in range(min(len(df), 20)):
+        for i in range(min(len(df), 50)):
             row_values = df.iloc[i].astype(str).tolist()
             if any(k in "".join(row_values) for k in ['업체명', '상호', '일자', '잔고']):
                 header_idx = i
